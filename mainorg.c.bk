@@ -1,0 +1,163 @@
+#include <stdint.h>
+#define MMIO_BASE       0x3F000000
+#define UART0_BASE      (MMIO_BASE + 0x201000)
+
+#define UART_DR                 ((volatile unsigned int*)(UART0_BASE + 0x00))
+#define UART_FR                 ((volatile unsigned int*)(UART0_BASE + 0x18))
+#define UART_IBRD               ((volatile unsigned int*)(UART0_BASE + 0x24))
+#define UART_FBRD               ((volatile unsigned int*)(UART0_BASE + 0x28))
+#define UART_LCRH               ((volatile unsigned int*)(UART0_BASE + 0x2C))
+#define UART_CR                 ((volatile unsigned int*)(UART0_BASE + 0x30))
+#define UART_IMSC               ((volatile unsigned int*)(UART0_BASE + 0x38))
+#define EMMC_BASE               (MMIO_BASE + 0x300000)   // 0x3F300000
+#define EMMC_STATUS             (*(volatile uint32_t*)(EMMC_BASE + 0x24))
+#define EMMC_CONTROL0           (*(volatile uint32_t*)(EMMC_BASE + 0x28))
+#define EMMC_CONTROL1           (*(volatile uint32_t*)(EMMC_BASE + 0x2c))
+#define EMMC_INTERRUPT          (*(volatile uint32_t*)(EMMC_BASE + 0x30))
+#define EMMC_BLKSIZECNT         (*(volatile uint32_t*)(EMMC_BASE + 0x4))
+#define EMMC_CMDTM              (*(volatile uint32_t*)(EMMC_BASE + 0xc))
+#define EMMC_ARG1               (*(volatile uint32_t*)(EMMC_BASE + 0x8))
+
+void uart_init(void)
+{
+    *UART_CR = 0x0;          // Disable UART
+
+    *UART_IBRD = 1;          // 115200 baud (for 48 MHz UART clock in QEMU)
+    *UART_FBRD = 40;
+
+    *UART_LCRH = (1 << 4) | (1 << 5) | (1 << 6); // Enable FIFO, 8-bit
+
+    *UART_IMSC = 0;          // Disable interrupts
+
+    *UART_CR = (1 << 0) | (1 << 8) | (1 << 9); // Enable UART, TX, RX
+}
+
+void uart_putc(char c)
+{
+    while (*UART_FR & (1 << 5)) {} // Wait while TX FIFO full
+    *UART_DR = c;
+}
+
+void uart_puts(const char* s)
+{
+    while (*s)
+    {
+        if (*s == '\n')
+            uart_putc('\r');
+        uart_putc(*s++);
+    }
+}
+
+void uart_hex(uint32_t value){
+    const char* hex_digits = "0123456789ABCDEF";
+    for (int i = 7; i >= 0; i--)
+    {
+        char hex_char = hex_digits[(value >> (i * 4)) & 0xF];
+        uart_putc(hex_char);
+    }
+    uart_putc('\n');
+}
+
+void uart_bin(uint32_t v){
+    for (int i = 31; i >= 0; i--)
+    {
+        uart_putc((v & (1 << i)) ? '1' : '0');
+    }
+    uart_putc('\n');
+}
+
+void sd_set_clock(uint32_t base_clock, uint32_t desired_clock) {
+    //disable SD clock before configuring it, by clearing the 2nd bit (1<<2) in control0 register
+    EMMC_CONTROL1 &= ~(1 << 2); // disable SD clock
+
+    while (EMMC_STATUS & (1 << 0));  // CMD inhibit
+    while (EMMC_STATUS & (1 << 1));  // DAT inhibit
+
+        //CLK_INTLEN enable: 0th bit (1<<0) in control0 register, which enables the internal clock
+    //CLK_EN SD clock enable: 2nd bit (1<<2) in control0 register, which enables the SD clock
+    EMMC_CONTROL1 |= (1 << 0); // enable internal clock and set frequency to 400 KHz (for 48 MHz base clock)
+    while (!(EMMC_CONTROL1 & (1 << 1))); // wait for internal clock to stabilize, signified by 1st bit in control1 register
+
+    
+    //internal clock setup for base emmc around 50 mHz - 100 mHz, :
+    //ARASAN SD base clock is 250Hz, but we can only set it to 48 MHz in QEMU, so we will use that as our base clock for calculations
+    //desired clock is 400 KHz for initialization, so we need to calculate the divider value using the formula:
+    uint32_t divider = (base_clock + (2 * desired_clock) - 1) / (2 * desired_clock);
+    //clamp the divider to max of 0x3FF (10 bits) and min of 2, as per the ARASAN SD controller specification, which states that the divider must be between 2 and 1023 (0x3FF)
+    if (divider < 2)
+    divider = 2;
+    if (divider > 0x3FF)
+    divider = 0x3FF;
+     
+    EMMC_CONTROL1 &= ~((0xFF << 8) | (0x3 << 6));
+
+    EMMC_CONTROL1 |= ((divider & 0xFF) << 8);
+    EMMC_CONTROL1 |= (((divider >> 8) & 0x3) << 6);
+
+    EMMC_CONTROL1 |= (1 << 2); // enable SD clock, which is the 2nd bit (1<<2) in control0 register
+    //no nneed to stabilize, while (!(EMMC_CONTROL1 & (1 << 2))); // wait for SD clock to stabilize, signified by 2nd bit in control1 register
+}
+
+void sd_send_command(uint32_t cmd_index, uint32_t arg) {
+    while (EMMC_STATUS & (1 << 0));  // CMD inhibit, wait until the command line is free
+    EMMC_INTERRUPT = 0xFFFFFFFF;
+    arg=0; // for CMD0, the argument is 0, which is GO_IDLE_STATE command to reset the SD card and put it in idle state
+    cmd_index = 0; // Ensure cmd_index is within 6 bits, as the CMDTM register uses bits 29:24 for the command index
+    //while(EMMC_STATUS & (1 << 9));  // READ_TRANSER
+    //while(EMMC_STATUS & (1 << 8));  // Write_TRANSER
+    EMMC_ARG1 = arg; // Set argument for the command
+    uint32_t cmdtm =
+    (cmd_index << 24) |   // CMD index
+    (0 << 16) |   // no data
+    (0 << 19) |   // CRC not checked
+    (0 << 20);    // no response//proper way
+    // dont do this cmdtm is fire and forget as soon as i set register it fires up ignring further ones immediately  EMMC_CMDTM = cmd_index; // Send command index, which is the lower 6 bits of the CMDTM register 29:24
+    //EMMC_CMDTM &= ~(0x3F << 24);      // clear bits 29:24, again no need
+    EMMC_CMDTM =  cmdtm; // set new index, fires immediately
+    //while (!(EMMC_INTERRUPT & 1));
+    //EMMC_INTERRUPT = 1; // Clear all interrupts by writing 1 to all bits in the interrupt register
+    uint32_t timeout = 1000000;
+
+   while (!(EMMC_INTERRUPT & 1)) {
+    if (EMMC_INTERRUPT & 0xFFFF0000) {
+        uart_puts("CMD ERROR\n");
+        uart_hex(EMMC_INTERRUPT);
+        break;
+    }
+    if (--timeout == 0) {
+        uart_puts("CMD TIMEOUT\n");
+        uart_hex(EMMC_INTERRUPT);
+        uart_hex((EMMC_INTERRUPT >> 17) & 0x1);
+        break;
+    }
+}
+    
+    //while (EMMC_STATUS & (1 << 0));  // CMD inhibit
+    //while (EMMC_STATUS & (1 << 1));  // DAT inhibit
+
+}
+
+void main(void)
+{
+    uart_init();
+    uart_puts("Hello, World!\n");
+    //uint32_t status = EMMC_STATUS;
+    //uart_hex(status);
+    //uart_bin(status);
+    //uart_hex(EMMC_CONTROL0);
+    //uart_hex(EMMC_CONTROL1);
+    //uart_hex(EMMC_INTERRUPT);
+    //reset
+    //EMMC_CONTROL1 |= (1 << 24);   // reset all, signified by 24th bit in control1 register
+    //while (EMMC_CONTROL1 & (1 << 24)); //busy-wait until reset is complete, meaning 24th bit is 0, similar to syscall poll()
+    //clock setup for SD
+    //sd_set_clock( 100000000, 400000);
+    //uart_puts("CONTROL1: ");
+    //uart_hex(EMMC_CONTROL1);
+    //sd_send_command(0, 0); // CMD0 with argument 0, which is GO_IDLE_STATE command to reset the SD card and put it in idle state
+
+    while (1){
+    
+}
+
+}
