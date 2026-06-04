@@ -1,6 +1,8 @@
 # Raspberry Pi 3 Bootloader
 
-A minimal bare-metal bootloader for the Raspberry Pi 3 that initializes hardware, loads a kernel image from SD/eMMC storage, and transfers execution to it.
+A bare-metal ARM64 bootloader for Raspberry Pi 3 developed as a low-level exploration of system startup, UART debugging, SD/eMMC communication, filesystem investigation, and kernel loading.
+
+The project currently demonstrates a complete boot chain from storage to kernel execution and serves as a foundation for future experimentation with secure boot mechanisms and firmware security concepts.
 
 ---
 
@@ -70,26 +72,30 @@ aarch64-none-elf-objcopy -O binary kernel.elf kernel.bin
 
 * Runs successfully on Raspberry Pi 3 hardware
 * UART-based debugging support
-* SD/eMMC block-level reads
 * Kernel loading into RAM
 * EL1 execution handoff
 * Minimal and educational codebase
+* Loads a kernel image from SD/eMMC using raw sector reads
+* Demonstrates block-level storage access without relying on an operating system
 
 ---
 
 ## Future Work
 
-> priority: high/low
+### High Priority
+- Interrupt handling
+- DMA-based transfers
+- Secure boot experiments
+- Firmware security demonstrations
 
-* Interrupt handling (high)
-* DMA-based transfers (high)
-* Full FAT32 file discovery (low)
-* GPT partition support (medium)
-* Improved memory management (low)
-* Better QEMU compatibility (low)
-* Interactive bootloader interface (low)
-* Secure boot and firmware integrity experiments (high)
-* Firmware Security Analysis Demonstration (high)
+### Medium Priority
+- GPT partition support
+
+### Low Priority
+- Full FAT32 file discovery
+- Improved memory management
+- Better QEMU compatibility
+- Interactive bootloader interface
 
 ---
 
