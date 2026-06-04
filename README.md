@@ -102,4 +102,4 @@ SD/eMMC → Bootloader → RAM Loading → EL1 Transition → Kernel Execution
 The project is intended as a learning-oriented exploration of bare-metal ARM64 development, boot processes, and low-level hardware interaction on Raspberry Pi 3.
 
 But I have decided to shift the angle for security booting purposes more in next phase, for demonstration and educational purposes.
-```
+
