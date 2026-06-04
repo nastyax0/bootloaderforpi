@@ -286,5 +286,5 @@ EL1J
 ```
 The above is for people to check out quickly common mistakes and related logs.
 
-The author is in state of fixing the kernel file i.e kernel.bin.
+The author is in state of fixing the kernel file i.e kernel.bin and adding better debugging logs.
 
